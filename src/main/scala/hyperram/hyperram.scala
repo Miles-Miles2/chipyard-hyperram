@@ -3,11 +3,11 @@ package hyperram
 
 import chisel3._
 import chisel3.util._
-import chisel3.experimental.{ExtModule, IntParam, BaseModule, Analog}
+import chisel3.experimental.{IntParam, BaseModule, Analog}
 import cmu.external.axi._
 import cmu.hyperram._
 import org.chipsalliance.cde.config.{Config, Field, Parameters}
-import cmu.mem.{SPMemBundle, SPMemBBox}
+//import cmu.mem.{SPMemBundle, SPMemBBox}
 import cmu.util.{IOBUF}
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tilelink._
@@ -49,11 +49,11 @@ class HyperRAMFront(val params: HyperRAMParams, val beatBytes: Int /*from sbus*/
 
   // < claude, investigate further - how properly punch out IO?
   val ioNode  = BundleBridgeSource(() => new HyperBusIO(params.hyperBusWidth))
-  val hbusPin = InModuleBody { ioNode.makeIO() }
+  //val hbusPin = InModuleBody { ioNode.makeIO() }
   // >
   override lazy val module = new AXIHyperRamImpl
 
-  class AXIHyperRamImpl extends Impl {
+  class AXIHyperRamImpl extends LazyModuleImp(this) {
     val (in, edge) = node.in(0)
 
     val controller = Module(
@@ -119,7 +119,8 @@ class HyperRAMFront(val params: HyperRAMParams, val beatBytes: Int /*from sbus*/
     controller.io.ctrl.config.writeQFullWait := false.B
 
     // ---- HyperBus pins: hand to the outside world (see the note below) ----
-    ioNode.bundle <> controller.io.hbus // punches out physical hyperam pins
+    //ioNode.bundle <> controller.io.hbus // punches out physical hyperam pins
+    ioNode.out(0)._1 <> controller.io.hbus
     //end claude
   }
 }
@@ -130,16 +131,23 @@ trait CanHavePeripheryHyperRAM { this: BaseSubsystem =>
 
   val hyperram = p(HyperRAMKey) match {
     case Some(hyperRamParams) => {
-      val front = LazyModule(new HyperRAMFront(hyperRamParams, sbus.beatBytes))
+        val front = sbus { LazyModule(new HyperRAMFront(hyperRamParams, sbus.beatBytes)) }
 
-      sbus.coupleTo("hyperram-port") {
-        front.node := AXI4Buffer() := TLToAXI4() := TLWidthWidget(sbus.beatBytes) := TLFragmenter(sbus.beatBytes, sbus.blockBytes, holdFirstDeny = true) := _
-      }
-
-      Some(front)
+        sbus.coupleTo("hyperram-port") {
+          front.node := AXI4Buffer() := TLToAXI4() := TLWidthWidget(sbus.beatBytes) := TLFragmenter(sbus.beatBytes, sbus.blockBytes, holdFirstDeny = true) := _
+        }
+        Some(front)
     }
     case None => None
   }
+
+  // ??
+  val hyperramSink = hyperram.map { front =>
+    val sink = BundleBridgeSink[HyperBusIO]()
+    sink := front.ioNode
+    sink
+  }
+  val hyperramPin = hyperramSink.map(sink => InModuleBody { sink.makeIO() })
 }
 
 //config
