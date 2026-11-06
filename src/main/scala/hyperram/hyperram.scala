@@ -9,6 +9,10 @@ import cmu.hyperram._
 import org.chipsalliance.cde.config.{Config, Field, Parameters}
 //import cmu.mem.{SPMemBundle, SPMemBBox}
 import cmu.util.{IOBUF}
+import chipyard.harness.{HarnessBinder, HasHarnessInstantiators}
+import chipyard.iobinders.{OverrideIOBinder, Port}
+import chipyard.iobinders.IOCellKey
+import chipyard.iocell.{IOCell}
 import freechips.rocketchip.diplomacy._
 import freechips.rocketchip.tilelink._
 import org.chipsalliance.cde.config.Parameters
@@ -140,7 +144,6 @@ trait CanHavePeripheryHyperRAM { this: BaseSubsystem =>
     }
     case None => None
   }
-
   // ??
   val hyperramSink = hyperram.map { front =>
     val sink = BundleBridgeSink[HyperBusIO]()
@@ -154,3 +157,28 @@ trait CanHavePeripheryHyperRAM { this: BaseSubsystem =>
 class WithHyperRAM(val addr: BigInt = 0x20000000) extends Config((site, here, up) => {
   case HyperRAMKey => Some(HyperRAMParams(addr = addr))
 })
+
+//hyperbusIO doesn't contain actual Analog pads, which will have to change eventually?
+class HyperRAMIOBinder extends OverrideIOBinder({
+  (system: CanHavePeripheryHyperRAM) => {
+    system.hyperramPin match {
+      case Some(pin) =>
+        val (port, cells) = IOCell.generateIOFromSignal(
+          pin.getWrappedValue, "hyperbus"
+          )
+          (Seq(HyperRAMPort(() => port)), cells)
+        case None =>
+          (Nil, Nil)
+    }
+  }
+})
+
+class WithHyperRAMModel(memSize: Int = 1 << 24) extends HarnessBinder({
+  case (th: HasHarnessInstantiators, port: HyperRAMPort, chipId: Int) => {
+    val mem = Module(new HyperRAM(memsize = memSize))
+      .suggestName(s"hyperram_model_$chipId")
+    mem.io <> port.io
+  }
+})
+
+case class HyperRAMPort(val getIO: () => HyperBusIO) extends Port[HyperBusIO]
